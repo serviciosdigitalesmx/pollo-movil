@@ -4,10 +4,14 @@ import { useEffect, useState } from "react";
 import { getSupabase } from "@/lib/supabase";
 import { signIn } from "@/lib/auth";
 import type { Session } from "@supabase/supabase-js";
+import { BrandLogo } from "@/components/brand-logo";
 import { useI18n } from "@/lib/i18n";
+import { usePathname, useRouter } from "next/navigation";
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
+  const [platformAdmin, setPlatformAdmin] = useState(false);
+  const [roleLoading, setRoleLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [email, setEmail] = useState("");
@@ -16,6 +20,17 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   const [resetSent, setResetSent] = useState(false);
   const [sendingReset, setSendingReset] = useState(false);
   const { t } = useI18n();
+  const pathname = usePathname();
+  const router = useRouter();
+  const isPasswordResetRoute = pathname === "/reset-password";
+  const isPublicGalleryRoute = pathname.startsWith("/g/");
+  const isPlatformRoute = pathname === "/platform" || pathname.startsWith("/platform/");
+  const isPolloRoute =
+    pathname === "/restaurant" ||
+    pathname.startsWith("/restaurant/") ||
+    isPlatformRoute ||
+    isPasswordResetRoute ||
+    isPublicGalleryRoute;
 
   useEffect(() => {
     let mounted = true;
@@ -42,6 +57,28 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
       listener.subscription.unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    async function resolveAccess() {
+      if (!session || isPasswordResetRoute || isPublicGalleryRoute) {
+        setPlatformAdmin(false);
+        setRoleLoading(false);
+        return;
+      }
+      setRoleLoading(true);
+      const { data, error } = await getSupabase().rpc("is_platform_admin");
+      if (!active) return;
+      const isAdmin = !error && data === true;
+      setPlatformAdmin(isAdmin);
+      setRoleLoading(false);
+      if (isAdmin && !isPlatformRoute) router.replace("/platform");
+      if (!isAdmin && isPlatformRoute) router.replace("/restaurant");
+      else if (!isAdmin && !isPolloRoute) router.replace("/restaurant");
+    }
+    void resolveAccess();
+    return () => { active = false; };
+  }, [isPasswordResetRoute, isPlatformRoute, isPolloRoute, isPublicGalleryRoute, router, session]);
 
   async function handleSignIn(e: React.FormEvent) {
     e.preventDefault();
@@ -77,7 +114,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     }
   }
 
-  if (loading) {
+  if (loading || (session && roleLoading)) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center text-slate-500">
         <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-amber-500" />
@@ -86,10 +123,19 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (!session) {
+  if (!session && !isPasswordResetRoute && !isPublicGalleryRoute) {
     return (
       <div className="mx-auto mt-20 max-w-md">
         <div className="rounded-2xl border border-stone-200 bg-card p-8 shadow-sm">
+          <div className="mb-5 flex justify-center">
+            <BrandLogo
+              width={192}
+              height={192}
+              alt="Logotipo oficial de El Pollo Móvil"
+              priority
+              className="h-40 w-40 object-contain"
+            />
+          </div>
           <h2 className="text-xl font-bold text-slate-900">
             {t("auth.title")}
           </h2>
@@ -165,6 +211,18 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
         </div>
       </div>
     );
+  }
+
+  if (!isPolloRoute) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center text-sm text-slate-500">
+        Abriendo Pollo Móvil…
+      </div>
+    );
+  }
+
+  if (isPlatformRoute && !platformAdmin) {
+    return <div className="p-8 text-sm text-slate-500">Validando acceso administrativo…</div>;
   }
 
   return <>{children}</>;
